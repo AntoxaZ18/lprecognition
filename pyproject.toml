@@ -1,0 +1,30 @@
+[project]
+name = "lpr-recognition"
+version = "0.1.0"
+description = "opencv + onnxruntime based lpr detection and recognition"
+authors = [
+    {name = "Anton",email = "antoxaz18@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11"
+
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.dependencies]
+numpy = "^2"
+pyyaml = "^6.0.2"
+pybind11 = "^2.13.6"
+wheel = "^0.45.1"
+setuptools = "^80.9.0"
+onnx = "^1.18.0"
+onnxscript = "^0.3.0"
+opencv-python = "^4.11.0.86"
+onnxruntime = "^1.22.0"
+pillow = "^11.2.1"
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
