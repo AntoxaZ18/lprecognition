@@ -8,7 +8,7 @@ from threading import Lock, Thread
 from queue import Queue
 from time import sleep, time
 from dataclasses import dataclass
-from typing import List
+from typing import List, Tuple
 from collections import defaultdict
 
 from lprnet_postprocess import lprnet_decode
@@ -70,9 +70,13 @@ class BatchManager:
         self.batches[model_id].append(task)
         self.last_time[model_id] = time()
 
-        if len(self.batches[model_id]) >= self.batch_size or self._has_timeout(model_id):
-            return True
-        return False
+        return self.is_ready(model_id)
+
+    def __iter__(self):
+        return iter(tuple(self.batches.keys()))
+
+    def is_ready(self, model_id: str):
+        return len(self.batches[model_id]) >= self.batch_size or self._has_timeout(model_id)
 
     def _has_timeout(self, model_id: str) -> bool:
         """
@@ -81,6 +85,7 @@ class BatchManager:
         return time() - self.last_time[model_id] > self.timeout_sec
 
     def get(self, model_id: str) -> list:
+        self.last_time[model_id] = time()
         return self.batches.pop(model_id, [])
 
     def clear(self):
@@ -100,31 +105,38 @@ class Inference():
         self.pool = ThreadPoolExecutor(max_workers=pool_workers)
         self.task_queue = Queue()   #сюда накидываем задания на инференс
         self.result_futures = {}
-        self.worker_thread = Thread(target=self._worker, daemon=True)
-        self.worker_thread.start()
         self.fut_lock = Lock()
         self.batch_manager = BatchManager(batch_size=8)
 
         self.preproc_factory = ModelPreprocessorFactory()
-        self.preproc_factory.register("lpr_recognition", lambda: LPRnetPreprocessor(model_shape=(24, 94)))
-        self.preproc_factory.register("yolo_lp", lambda: YoloPreprocess(model_shape=(320, 320)))
+        self.preproc_factory.register("lpr_recognition", lambda: LPRnetPreprocessor)
+        self.preproc_factory.register("yolo_lp", lambda: YoloPreprocess)
 
+        self.worker_thread = Thread(target=self._worker, daemon=True)
+        self.worker_thread.start()
 
-    def create_session(self, model_name: str, model_id: str) -> None:
+    def create_session(self, model_name: str, model_id: str, args=None) -> None:
         """
         load model and register preprocessor
         """
 
         model = self.model_loader.load(model_name)
-        session = ort.InferenceSession(model, providers=self.providers, sess_options=ort.SessionOptions())
 
-        preprocesor = self.preproc_factory.create(model_id)
+        sess_options = ort.SessionOptions()
+        # sess_options.graph_optimization_level = (
+        #     ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # )
+        # sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        # sess_options.inter_op_num_threads = 3
+
+        session = ort.InferenceSession(model, providers=self.providers, sess_options=sess_options)
+
+        preprocesor = self.preproc_factory.create(model_id)(**args)
 
         self.sessions[model_id] = ModelSession(model_id=model_id, preprocessor=preprocesor, session=session)
 
     def _get_session(self, model_id: str):
         return self.sessions.get(model_id)
-
 
     def submit_task(self, model_id: str = None, model_inputs: np.array = None, task_id: str = None):
         if not all ((model_id, task_id)):
@@ -148,16 +160,25 @@ class Inference():
                 task = self.task_queue.get_nowait()
 
                 if self.batch_manager.add(task.model_id, task):
-                    self.pool.submit(self._process_batch, task.model_id)
-                    # self._process_batch(task.model_id)
+                    tasks = self.batch_manager.get(task.model_id)
+                    self.pool.submit(self._process_batch, tasks)
+                    # self._process_batch(tasks)
 
-            sleep(0.05)
+            # Проверяем, есть ли незавершённые батчи
+            for model_id in self.batch_manager:
+                if self.batch_manager.is_ready(model_id):
+                    tasks = self.batch_manager.get(task.model_id)
+                    self.pool.submit(self._process_batch, tasks)
+                    # self._process_batch(tasks)
 
-    def _process_batch(self, model_id: str):
-        batch_tasks = self.batch_manager.get(model_id)
+            sleep(0.01)
+
+    def _process_batch(self, batch_tasks: list[ImgTask]):
+        
         if not batch_tasks:
             return
 
+        model_id = batch_tasks[0].model_id
 
         session = self._get_session(model_id)
         if not session:

@@ -29,6 +29,7 @@ class LPRnetPreprocessor(ModelPreprocessor):
 
     def __init__(self, model_shape):
         super().__init__(model_shape)
+
         self.mean = np.array([0.496, 0.502, 0.504], dtype=np.float32)
         self.std = np.array([0.254, 0.2552, 0.2508], dtype=np.float32)
 
@@ -42,6 +43,8 @@ class LPRnetPreprocessor(ModelPreprocessor):
         Возвращает:
             np.ndarray: Нормализованный батч в формате (B, C, H, W) выделенный в единой памяти
         """
+
+        rgb_batch = [cv2.cvtColor(image, cv2.COLOR_BGR2RGB) for image in rgb_batch]
 
         resized_batch = [cv2.resize(img, (self.model_shape[1], self.model_shape[0])) for img in rgb_batch]
 
@@ -71,19 +74,17 @@ class YoloPreprocess(ModelPreprocessor):
         self.mode = mode
         self.bgr = bgr
 
-    def preprocess_batch(self, rgb_batch: list[np.ndarray]) -> list[np.ndarray]:
+    def preprocess_batch(self, rgb_batch: list[np.ndarray], crop=None) -> list[np.ndarray]:
         
         #конвертируем в RGB если изначально был формат opencv
         if self.bgr:
             rgb_batch = [cv2.cvtColor(image, cv2.COLOR_BGR2RGB) for image in rgb_batch]
 
-        if self.mode == "letterbox":
-            rgb_batch = [self._letterbox(img) for img in rgb_batch]
+        rgb_batch = [self._letterbox(img) for img in rgb_batch]
+        # Image.fromarray(rgb_batch[0]).save("preprocessed.jpg")
 
         resized_batch = np.ascontiguousarray(np.stack(rgb_batch))
-
         resized_batch = resized_batch.astype(np.float32) / 255.0
-
         resized_batch = np.transpose(resized_batch, (0, 3, 1, 2))
 
         return resized_batch
@@ -139,7 +140,6 @@ class YoloPostProcess:
         self.iou = iou
 
     def __call__(self, model_outputs:np.ndarray):
-
         outputs = np.transpose(model_outputs)
 
         # find max score for prediction
@@ -184,33 +184,60 @@ class YoloPostProcess:
         }
 
 
-def crop_image(image:np.ndarray, boxes: list[list[int]], model_shape: Tuple[int, int], mode='letterbox') -> list[np.ndarray]:
+def crop_image(image:np.ndarray, boxes: list[list[int]], model_shape: Tuple[int, int], crop=None) -> list[np.ndarray]:
     
-    if mode != 'letterbox':
-        raise ValueError('mode must be lettrbox')
+    images = []
 
     h, w, *_ = image.shape
 
-    ratio = model_shape[1] / w
-    pad = (model_shape[0] - int(h * ratio)) / 2 
+    if crop:
+        ratio = model_shape[0] / (crop[2] - crop[0]) 
 
-    images = []
+        print(ratio)
 
-    for box in boxes:
+        y1 = crop[0] 
+        x1 = crop[1]
+        y2 = crop[2]
+        x2 = crop[3]
 
-        box = np.array(box)
-        box = box / ratio
-        box[1] = box[1] - pad / ratio
+        pad = x1
 
-        box = box.astype(int)
-
-        cropped = image[box[1] : box[1] + box[3], box[0] : box[0] + box[2], :]
-
-        images.append(cropped)
-
-    return images
+        for box in boxes:
+            box = np.array(box)
+            box /= ratio
+            box[0] += pad
+            box = box.astype(int)
 
 
+            cropped = image[box[1] : box[1] + box[3], box[0] : box[0] + box[2], :]
+
+            images.append(cropped)
+        
+        return images
+
+    else:
+        #letterbox mode
+        ratio = model_shape[1] / w
+        pad = (model_shape[0] - int(h * ratio)) / 2 
+
+
+        for box in boxes:
+
+            box = np.array(box)
+            box = box / ratio
+            box[1] = box[1] - pad / ratio
+
+            box = box.astype(int)
+
+            cropped = image[box[1] : box[1] + box[3], box[0] : box[0] + box[2], :]
+
+            images.append(cropped)
+
+        return images
+
+
+def crop(image: np.ndarray, box: Tuple[int, int, int, int]):
+    return image[box[1] : box[3], box[0] : box[2], :]
 
 
 
@@ -221,8 +248,12 @@ if __name__ == "__main__":
     import onnxruntime as ort
     from yolo_onnnx import YoloONNX
 
-    # image = Image.open("39.bmp")
-    image = cv2.imread("39.bmp")
+    model_shape = (320, 320)
+
+    image = np.asarray(Image.open("39.bmp"))
+    # image = np.asarray(Image.open("./test.jpg"))
+
+    # image = cv2.imread("test.jpg")
 
     batch_size = 8
 
@@ -234,12 +265,16 @@ if __name__ == "__main__":
     # frame_boxes = model(batch)
     # print(frame_boxes)
 
-    preprocess = YoloPreprocess(model_shape=(320, 320), mode="letterbox")
+    preprocess = YoloPreprocess(model_shape=model_shape, mode="letterbox")
     postprocess = YoloPostProcess()
 
     start = time()
-    batch = preprocess.preprocess_batch(batch)
+    print(image.shape)
 
+    # roi = crop(image, (465, 173, 1252, 525))
+    roi = image
+    batch = [roi.copy() for _ in range(batch_size)]
+    batch = preprocess.preprocess_batch(batch) 
 
     session = ort.InferenceSession("./models/ex8_c3k2_light_320_nwd_.onnx", providers=["CPUExecutionProvider"])
 
@@ -249,18 +284,23 @@ if __name__ == "__main__":
     output_name = session.get_outputs()[0].name
     input_name = session.get_inputs()[0].name
 
-    # print(input_name, output_name)
+    print(model_inputs[0].shape)
 
     outputs = session.run([output_name], {input_name: batch})
     print(f"{(time() - start) * 1000:3f} ms per batch")
 
     outputs = outputs[0]
 
-    results = postprocess(outputs)
 
-    result = results[0]
+    for i in range(batch_size):
+        results = postprocess(outputs[i])
 
-    tiles = crop_image(image, result['boxes'], model_shape=(320, 320))
-    for idx, i in enumerate(tiles):
-        img = Image.fromarray(i)
-        img.save(f'cropped_{idx}.jpg')
+        print(results)
+        if len(results) == 0:
+            continue
+        tiles = crop_image(roi, results['boxes'], model_shape=model_shape)
+        # tiles = crop_image(image, results['boxes'], model_shape=model_shape, crop=(0, central_pad, h, h+central_pad))
+
+        for idx, i in enumerate(tiles):
+            img = Image.fromarray(i)
+            img.save(f'cropped_{idx}.jpg')

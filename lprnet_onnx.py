@@ -4,11 +4,12 @@ from time import time
 import numpy as np
 import onnxruntime as ort
 from utils import decode_function, BeamDecoder
+from abc import ABC, abstractmethod
 
 
 print(ort.__version__)
 
-model_path = "stn_lpr_opt.onnx"
+model_path = "./models/stn_lpr_opt_2.onnx"
 
 CHARS = [
      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
@@ -18,11 +19,59 @@ CHARS = [
 
 
 since = time()
-image = Image.open("./val/img/Y958PX102.png")
+image = Image.open("cropped____.png")
 
 
 mean = np.array([0.496, 0.502, 0.504], dtype=np.float32)
 std = np.array([0.254, 0.2552, 0.2508], dtype=np.float32)
+
+
+class ModelPreprocessor(ABC):
+    def __init__(self, model_shape: tuple):
+        """
+        model_shape в формате (Height, Weight)
+        """
+        self.model_shape = model_shape
+
+    @abstractmethod
+    def preprocess_batch(self, rgb_batch: list[np.ndarray]) -> np.ndarray:
+        ...
+class LPRnetPreprocessor(ModelPreprocessor):
+    """
+    preprocessing images for lprnet
+    """
+
+    def __init__(self, model_shape):
+        super().__init__(model_shape)
+        self.mean = np.array([0.496, 0.502, 0.504], dtype=np.float32)
+        self.std = np.array([0.254, 0.2552, 0.2508], dtype=np.float32)
+
+    def preprocess_batch(self, rgb_batch: list[np.ndarray]) -> np.ndarray:
+        """
+        Обрабатывает батч изображений (список или кортеж) в формате RGB: resize, transpose, normalize.
+
+        Параметры:
+            rgb_batch (list, tuple) : Входной батч изображений в формате (H, W, C)
+
+        Возвращает:
+            np.ndarray: Нормализованный батч в формате (B, C, H, W) выделенный в единой памяти
+        """
+
+        resized_batch = [cv2.resize(img, (self.model_shape[1], self.model_shape[0])) for img in rgb_batch]
+
+        resized_batch = np.ascontiguousarray(np.stack(resized_batch))
+
+        # Конвертируем в float32 и делим на 255, если это uint8
+        resized_batch = resized_batch.astype(np.float32) / 255.0
+
+        # Перевод в формат (B, C, H, W)
+        transposed = np.transpose(resized_batch, (0, 3, 1, 2))  # (B, C, H, W)
+
+        transposed = (transposed - self.mean.reshape(1, -1, 1, 1)) / self.std.reshape(1, -1, 1, 1)
+
+        print("mean", transposed[0].shape)
+
+        return transposed
 
 def batch_transform(rgb_batch, mean, std):
     """
@@ -78,12 +127,19 @@ BATCH_SIZE = 10
 
 images = np.stack([image.copy() for i in range(BATCH_SIZE)])
 
-for i in range(50):
+preprocessor = LPRnetPreprocessor(model_shape=(24, 94))
+
+for i in range(1):
     start = time()
     data = batch_transform(images, mean, std)
+    data = preprocessor.preprocess_batch(images)
 
     predictions = session.run(None, {"input": data})
-    labels, prob, pred_labels = decode_function(predictions[0], CHARS, BeamDecoder)
+    single_pred = predictions[0]
+    # print(single_pred[0][0])
+
+    labels, prob, pred_labels = decode_function(single_pred, CHARS, BeamDecoder)
     times.append(time() - start)
+    print(labels)
 
 print(f"{sum(times) * 1000 / len(times) / BATCH_SIZE:.3f} ms")
