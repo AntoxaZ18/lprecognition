@@ -196,7 +196,7 @@ class Inference():
             for task, output in zip (batch_tasks, outputs[0]):
                 future = self.result_futures.pop(task.task_id, None)
                 if future:
-                    future.set_result(output)
+                    future.set_result((output, task.task_id)) #task_id for trasckig result in batch
 
 
     def _get_model_id(self, model_name: str) -> str:

@@ -1,18 +1,19 @@
+import sys
 from inference_engine import Inference, ModelLoadFS
-from PIL import Image
 import numpy as np
 from lprnet_postprocess import lprnet_decode
-from preprocess import YoloPostProcess, crop_image
+from preprocess import YoloPostProcess, crop_image, PlateFilter
 from time import sleep, time
 from concurrent.futures import as_completed
-from utils import decode_function, BeamDecoder
 import cv2
 from queue import Queue
+import array
 
-from fastuuid import uuid4
+from fastuuid import uuid1
 from threading import Thread
 from typing import Tuple
-
+from tracker import ByteTracker
+import threading
 
 Model_shape = (320, 320)
 
@@ -26,6 +27,19 @@ CHARS = [
      'A', 'B', 'E', 'K', 'M', 'H', 'O', 'P', 'C', 'T',
      'Y', 'X', '-'
 ]
+
+
+class IdGen:
+    def __init__(self, thread_id, max_count = 1024):
+        self.thread_id = thread_id
+        self.max_count = max_count
+        self.counter = 0
+
+    def __call__(self):
+        now = int(time() * 1e6)  # Микросекунды
+        uuid = f"{now}-{self.thread_id}-{self.counter}"
+        self.counter += 1
+        return uuid
 
 class VideoPipeLine:
     def __init__(self, video_source: str, yolo_shape=(640, 640)):
@@ -110,78 +124,145 @@ class VideoPipeLine:
         self._stop = True
 
 
-    def draw_box(self, image, coords, model_shape: Tuple) -> None:
-        import sys
+    def draw_box(self, image, box_coords: list[int], model_shape: Tuple, desc: str) -> None:
 
         ratio = model_shape[1] / self.width
         pad = (model_shape[0] - int(self.height * ratio)) / 2 
 
-        for obj_coord in coords:
-            obj_coord = np.array(obj_coord).astype(float)
+        obj_coord = np.array(box_coords).astype(float)
 
-            obj_coord /= ratio
-            obj_coord[1] -= pad / ratio
+        obj_coord /= ratio
+        obj_coord[1] -= pad / ratio
 
-            obj_coord = obj_coord.astype(int)
+        obj_coord = obj_coord.astype(int)
 
-            box = (obj_coord[0], obj_coord[1], obj_coord[2], obj_coord[3])
+        box = (obj_coord[0], obj_coord[1], obj_coord[2], obj_coord[3])
 
-            cv2.rectangle(image, box, (255, 0, 0), 2)
+        cv2.rectangle(image, box, (255, 0, 0), 5)
+        if desc:
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            fontScale = 1
+            color = (255, 0, 0)
+            thickness = 2
+            cv2.putText(image, desc, (box[0], box[1] - 10), font, fontScale, color, thickness)
+
+
+    def run_inference(self, model_id: str, image_batch: dict[str, np.ndarray], postprocess=None) -> dict[str, dict]: 
+        results = {}
+        futures = [inf.submit_task(model_id = model_id, model_inputs = image, task_id = uuid) for uuid, image  in image_batch.items()]
+
+        #collect results
+        for future in as_completed(futures):
+            predicts, image_id = future.result()
+            if postprocess:
+
+                results[image_id] = postprocess(predicts)
+            else:
+                results[image_id] = predicts
+
+        return results
+
+
+
 
     def pipeline(self):
-        yolo_postprocess = YoloPostProcess()
-        yolo_batch_results = list()
+        yolo_postprocess = YoloPostProcess(confidence=0.5, iou=0.3, tracker=ByteTracker(frame_rate=10, track_high_thresh = 0.5, track_buffer=300,  new_track_thresh=0.6, fuse_score=0.4))
 
-        image_batch = []
-        lpr_images = []
+        def lpr_postprocess(prediction):
+            return lprnet_decode(np.expand_dims(prediction, 0))[0][0]
+
+
+        image_batch = dict()
+        lpr_images = dict()
+        ocr_filters = dict()
+
+        uuid_gen = IdGen(thread_id=threading.get_ident())
 
         while not self._stop:
 
             while not self.src_queue.empty():
-                image_batch.append(self.src_queue.get_nowait())
+                image_batch[uuid_gen()] = self.src_queue.get_nowait()
 
             if not image_batch:
-                sleep(0.1)
+                sleep(0.05)
                 continue
 
 
             start = time()
-            futures = [inf.submit_task(model_id = "yolo_lp", model_inputs = image, task_id = uuid4()) for image  in image_batch]
 
-            inference_batch_size = len(futures)
+            yolo_predicts = self.run_inference("yolo_lp", image_batch, yolo_postprocess)
 
+            # print("yolo_predicts", yolo_predicts)
 
-            for img, fut in zip(image_batch, futures):
-                outputs = fut.result()
-                results = yolo_postprocess(outputs)
+            image_batch = dict(sorted(image_batch.items())) #sort dict of images by uuid / timestamp
 
-                if not results:
+            lpr_track = {}
+            for uuid, img in image_batch.items():
+                result = yolo_predicts[uuid]
+
+                if not result:
                     continue
 
-                tiles = crop_image(img, results['boxes'], model_shape=self.yolo_shape)
-                lpr_images += tiles
-                yolo_batch_results.append(results)
+                for detection in result:
+
+                    object_uuid = uuid_gen()
+
+                    track = detection.get("track_id")
+
+                    if track:
+                        ocr_filters[track] = ocr_filters.get(track, PlateFilter())
+
+                        box = crop_image(img, detection['box'], model_shape=self.yolo_shape)
+
+                        lpr_images[object_uuid] = box
+                        lpr_track[object_uuid] = detection  #connect lpr with track
+
+
+                # print(len(result))
+
+                # print(len(results["boxes"]), len(results["track_id"]), len(results["track_id"]))
                 # cv2.imwrite('crop.png', tiles[0])
 
 
-            futures = [inf.submit_task(model_id = "lpr_recognition", model_inputs = image, task_id = uuid4()) for image  in lpr_images]
+            # print("lpr_images", lpr_images.keys())
+            # print("lpr_track", lpr_track)
+            
 
-            for fut in as_completed(futures):
-                result = fut.result()
-            #     name = img.split('\\')[-1].split('.')[0]
-                predicted = lprnet_decode(np.expand_dims(result, 0))[0][0]
-                print(predicted)
+            lpr_predicts = self.run_inference("lpr_recognition", lpr_images, lpr_postprocess)
+            
+            for object_uuid, decoded in lpr_predicts.items():
+                # print(object_uuid, decoded)
+                obj_detection = lpr_track[object_uuid]
 
-            ms = (time() - start) * 1000
-            # print(f"total: {ms:.2f}, per image: {ms / inference_batch_size:.2f} ms {inference_batch_size}")
+                if obj_detection["track_id"] is None:
+                    continue
 
-            for image, result in zip(image_batch, yolo_batch_results):
-                self.draw_box(image, result['boxes'], model_shape=self.yolo_shape)
-                self.output_queue.put(image.copy())
+                score = obj_detection["score"]
+                track_id = obj_detection["track_id"]
+
+                ocr_filters[track_id].add((decoded, score))
+
+            current_tracks = set([track.track_id for track in yolo_postprocess.tracker.tracker.tracked_stracks + yolo_postprocess.tracker.tracker.lost_stracks])
+            ocr_filters = {track: ocr_filter for track, ocr_filter in ocr_filters.items() if track in current_tracks}
+
+
+            for uuid, img in image_batch.items():   
+                predictions = yolo_predicts[uuid]
+                
+                # print(len(predictions))
+                for prediction in predictions:
+
+                    track_id = prediction.get("track_id")
+
+                    if track_id:
+                        description = f"{track_id} {ocr_filters[track_id].most_frequent()}" 
+                    else:
+                        description = ""
+                    self.draw_box(img, prediction['box'], model_shape=self.yolo_shape, desc=description)
+                    self.output_queue.put(img)
 
             image_batch.clear()
             lpr_images.clear()
-            yolo_batch_results.clear()
 
 
 # import os

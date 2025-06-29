@@ -4,6 +4,10 @@ import numpy as np
 import cv2
 from dataclasses import dataclass
 from typing import Tuple
+from tracker import TrackerInput, ByteTracker
+from collections import Counter
+import heapq
+import re
 
 @dataclass
 class ModelSession:
@@ -134,10 +138,13 @@ class ModelPreprocessorFactory:
     
 
 class YoloPostProcess:
-    def __init__(self, confidence=0.5, iou=0.5, mode="letterbox"):
+    def __init__(self, confidence=0.5, iou=0.5, mode="letterbox", tracker=None):
+        self.tracker = tracker
         self.confidence = confidence
         self.mode = mode
         self.iou = iou
+        self.img_height = 320
+        self.img_width = 320
 
     def __call__(self, model_outputs:np.ndarray):
         outputs = np.transpose(model_outputs)
@@ -177,16 +184,42 @@ class YoloPostProcess:
         scores = [scores[i] for i in indices]
         class_ids = [class_ids[i] for i in indices]
 
-        return {
-            'boxes': boxes,
-            'scores': scores,
-            'class_ids': class_ids
-        }
+        result = []
 
+        if self.tracker:
+            
+            x = TrackerInput(conf=np.array(scores), xywh=np.array(boxes), cls_=np.array(class_ids))
+            online_targets = self.tracker.update(x, (self.img_height, self.img_width))
 
-def crop_image(image:np.ndarray, boxes: list[list[int]], model_shape: Tuple[int, int], crop=None) -> list[np.ndarray]:
+            if len(online_targets):
+                x1 = online_targets[:, 0]
+                y1 = online_targets[:, 1]
+                x2 = online_targets[:, 2]
+                y2 = online_targets[:, 3]
+
+                boxes = np.column_stack([(x1+x2) / 2, (y1 + y2) / 2, x2-x1, y2-y1]).tolist()
+                scores =  online_targets[:, 5].tolist()
+                class_ids = online_targets[:, 6].tolist()
+                track_ids = online_targets[:, 4].tolist()
+
+                for box, score, class_id, track_id in zip(boxes, scores, class_ids, track_ids):
+                    result.append({
+                        "box": box,
+                        "score": score,
+                        "class_id": class_id,
+                        "track_id": track_id
+                    })
+        else:
+            for box, score, class_id in zip(boxes, scores, class_ids):
+                result.append({
+                    "box": box,
+                    "score": score,
+                    "class_id": class_id
+                })
+        return result
+
+def crop_image(image:np.ndarray, box: list[int], model_shape: Tuple[int, int], crop=None) -> np.ndarray:
     
-    images = []
 
     h, w, *_ = image.shape
 
@@ -202,105 +235,134 @@ def crop_image(image:np.ndarray, boxes: list[list[int]], model_shape: Tuple[int,
 
         pad = x1
 
-        for box in boxes:
-            box = np.array(box)
-            box /= ratio
-            box[0] += pad
-            box = box.astype(int)
+        box = np.array(box)
+        box /= ratio
+        box[0] += pad
+        box = box.astype(int)
 
+        cropped = image[box[1] : box[1] + box[3], box[0] : box[0] + box[2], :]
 
-            cropped = image[box[1] : box[1] + box[3], box[0] : box[0] + box[2], :]
-
-            images.append(cropped)
-        
-        return images
+        return cropped
 
     else:
         #letterbox mode
         ratio = model_shape[1] / w
         pad = (model_shape[0] - int(h * ratio)) / 2 
 
+        box = np.array(box)
+        box = box / ratio
+        box[1] = box[1] - pad / ratio
 
-        for box in boxes:
+        box = box.astype(int)
 
-            box = np.array(box)
-            box = box / ratio
-            box[1] = box[1] - pad / ratio
+        cropped = image[box[1] : box[1] + box[3], box[0] : box[0] + box[2], :]
 
-            box = box.astype(int)
-
-            cropped = image[box[1] : box[1] + box[3], box[0] : box[0] + box[2], :]
-
-            images.append(cropped)
-
-        return images
-
+        return cropped
 
 def crop(image: np.ndarray, box: Tuple[int, int, int, int]):
     return image[box[1] : box[3], box[0] : box[2], :]
 
 
 
+class PlateFilter:
+    def __init__(self, window_size: int = 30, thresh_count = 5):
+        self.window_size = window_size
+        self.thresh_count = thresh_count
+        self.heap = []
 
-if __name__ == "__main__":
-    from PIL import Image
-    from time import time
-    import onnxruntime as ort
-    from yolo_onnnx import YoloONNX
+    def add(self, plate: Tuple[str, float]):
+        if not self._validate_plate(plate[0]):
+            return
+        
+        heapq.heappush(self.heap, (-plate[1], plate[0]))
 
-    model_shape = (320, 320)
+        if len(self.heap) > self.window_size:
+            heapq.heappop(self.heap)
+        
+    def most_frequent(self):
+        '''
+        return most frequent plate from heap
+        '''
+        if not self.heap:
+            return None
+        
+        counter = Counter([text for _, text in self.heap])  #get only texts
 
-    image = np.asarray(Image.open("39.bmp"))
-    # image = np.asarray(Image.open("./test.jpg"))
+        most_common = counter.most_common(1)
 
-    # image = cv2.imread("test.jpg")
+        if most_common and most_common[0][1] >= self.thresh_count:
+            return most_common[0][0] 
 
-    batch_size = 8
-
-    batch = [np.asarray(image.copy()) for i in range(batch_size)]
-    # batch = [image] * batch_size
-
-    # model = YoloONNX("./models/ex8_c3k2_light_320_nwd_.onnx", device='CPU', threads=batch_size, classes=['LPR'])
-
-    # frame_boxes = model(batch)
-    # print(frame_boxes)
-
-    preprocess = YoloPreprocess(model_shape=model_shape, mode="letterbox")
-    postprocess = YoloPostProcess()
-
-    start = time()
-    print(image.shape)
-
-    # roi = crop(image, (465, 173, 1252, 525))
-    roi = image
-    batch = [roi.copy() for _ in range(batch_size)]
-    batch = preprocess.preprocess_batch(batch) 
-
-    session = ort.InferenceSession("./models/ex8_c3k2_light_320_nwd_.onnx", providers=["CPUExecutionProvider"])
-
-    model_inputs = session.get_inputs()
-    input_shape = model_inputs[0].shape
-
-    output_name = session.get_outputs()[0].name
-    input_name = session.get_inputs()[0].name
-
-    print(model_inputs[0].shape)
-
-    outputs = session.run([output_name], {input_name: batch})
-    print(f"{(time() - start) * 1000:3f} ms per batch")
-
-    outputs = outputs[0]
+        return None
 
 
-    for i in range(batch_size):
-        results = postprocess(outputs[i])
+    def _validate_plate(self, license_plate: str):
+        return re.fullmatch(r".\d{3}.{2}\d{2,3}", license_plate)
 
-        print(results)
-        if len(results) == 0:
-            continue
-        tiles = crop_image(roi, results['boxes'], model_shape=model_shape)
-        # tiles = crop_image(image, results['boxes'], model_shape=model_shape, crop=(0, central_pad, h, h+central_pad))
+# if __name__ == "__main__":
 
-        for idx, i in enumerate(tiles):
-            img = Image.fromarray(i)
-            img.save(f'cropped_{idx}.jpg')
+# if __name__ == "__main__":
+#     from PIL import Image
+#     from time import time
+#     import onnxruntime as ort
+#     from yolo_onnnx import YoloONNX
+
+#     model_shape = (320, 320)
+
+#     image = np.asarray(Image.open("39.bmp"))
+#     # image = np.asarray(Image.open("./test.jpg"))
+
+#     # image = cv2.imread("test.jpg")
+
+#     batch_size = 8
+
+#     batch = [np.asarray(image.copy()) for i in range(batch_size)]
+#     # batch = [image] * batch_size
+
+#     # model = YoloONNX("./models/ex8_c3k2_light_320_nwd_.onnx", device='CPU', threads=batch_size, classes=['LPR'])
+
+#     # frame_boxes = model(batch)
+#     # print(frame_boxes)
+
+#     preprocess = YoloPreprocess(model_shape=model_shape, mode="letterbox")
+#     postprocess = YoloPostProcess()
+
+#     start = time()
+
+#     # roi = crop(image, (465, 173, 1252, 525))
+#     roi = image
+#     batch = [roi.copy() for _ in range(batch_size)]
+#     batch = preprocess.preprocess_batch(batch) 
+
+#     session = ort.InferenceSession("./models/model.quant.onnx", providers=["CPUExecutionProvider"])
+
+#     model_inputs = session.get_inputs()
+#     input_shape = model_inputs[0].shape
+
+#     output_name = session.get_outputs()[0].name
+#     input_name = session.get_inputs()[0].name
+
+#     print("model_shape", model_inputs[0].shape)
+
+#     outputs = session.run([output_name], {input_name: batch})
+#     print(f"{(time() - start) * 1000:3f} ms per batch")
+
+#     print(outputs[0][1].shape)
+
+#     outputs = outputs[0]
+
+
+#     for i in range(batch_size):
+#         results = postprocess(outputs[i])
+
+#         print(results)
+#         if len(results) == 0:
+#             continue
+#         tiles = crop_image(roi, results['boxes'], model_shape=model_shape)
+#         # tiles = crop_image(image, results['boxes'], model_shape=model_shape, crop=(0, central_pad, h, h+central_pad))
+
+#         for idx, i in enumerate(tiles):
+#             img = Image.fromarray(i)
+#             img.save(f'cropped_{idx}.jpg')
+
+#         break
