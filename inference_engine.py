@@ -1,18 +1,23 @@
-import cv2
-import onnxruntime as ort
-import numpy as np
-from abc import ABC, abstractmethod
 import os
-from concurrent.futures import ThreadPoolExecutor, Future
-from threading import Lock, Thread
-from queue import Queue
-from time import sleep, time
+from abc import ABC, abstractmethod
+from collections import defaultdict, deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import List, Tuple
-from collections import defaultdict
+from queue import Queue
+from threading import Lock, Thread
+from time import sleep, time
+
+import numpy as np
+import onnxruntime as ort
 
 from lprnet_postprocess import lprnet_decode
-from preprocess import ModelPreprocessorFactory, LPRnetPreprocessor, YoloPreprocess, ModelSession
+from preprocess import (
+    LPRnetPreprocessor,
+    ModelPreprocessorFactory,
+    ModelSession,
+    YoloPreprocess,
+)
+
 
 @dataclass
 class ImgTask:
@@ -56,6 +61,24 @@ class ModelLoadFS(ModelLoader):
         return readed
 
 
+
+
+class BatchCounter:
+    def __init__(self, window_seconds=1):
+        self.batches = deque()  # хранит временные метки
+        self.window_seconds = window_seconds
+
+    def add_batch(self):
+        self.batches.append(time())
+
+    @property
+    def batches_per_window(self):
+        now = time()
+        # Удаляем все элементы, которые старше window_seconds
+        while self.batches and now - self.batches[0] > self.window_seconds:
+            self.batches.popleft()
+        return len(self.batches)
+
 class BatchManager:
     def __init__(self, batch_size: int = 8, timeout: float = 0.1):
         self.batch_size = batch_size
@@ -98,15 +121,17 @@ class Inference():
     реализует инференс моделей
     """
 
-    def __init__(self, model_loader: ModelLoader, pool_workers=os.cpu_count()):
+    def __init__(self, model_loader: ModelLoader, pool_workers=os.cpu_count(), batch_size = 8):
         self.model_loader = model_loader
+        self.batch_size = batch_size
         self.providers = ['CPUExecutionProvider']
         self.sessions = {}
         self.pool = ThreadPoolExecutor(max_workers=pool_workers)
         self.task_queue = Queue()   #сюда накидываем задания на инференс
         self.result_futures = {}
         self.fut_lock = Lock()
-        self.batch_manager = BatchManager(batch_size=8)
+        self.batch_manager = BatchManager(batch_size=self.batch_size)
+        self.perf_metric = BatchCounter(window_seconds=1)
 
         self.preproc_factory = ModelPreprocessorFactory()
         self.preproc_factory.register("lpr_recognition", lambda: LPRnetPreprocessor)
@@ -114,6 +139,9 @@ class Inference():
 
         self.worker_thread = Thread(target=self._worker, daemon=True)
         self.worker_thread.start()
+
+    def batches_per_second(self):
+        return self.perf_metric.batches_per_window
 
     def create_session(self, model_name: str, model_id: str, args=None) -> None:
         """
@@ -197,6 +225,8 @@ class Inference():
                 future = self.result_futures.pop(task.task_id, None)
                 if future:
                     future.set_result((output, task.task_id)) #task_id for trasckig result in batch
+
+        self.perf_metric.add_batch()    #add metric
 
 
     def _get_model_id(self, model_name: str) -> str:

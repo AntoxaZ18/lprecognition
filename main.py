@@ -86,7 +86,7 @@ class VideoPipeLine:
             # frame = cv2.imread("vesta.png")
 
             self.src_queue.put(frame)
-            sleep(5 / self.fps)
+            sleep(1 / self.fps)
 
         # cap.release()
 
@@ -109,7 +109,7 @@ class VideoPipeLine:
 
 
             try:
-                cv2.imshow('Video Player', self.output_queue.get_nowait())
+                # cv2.imshow(str(threading.get_ident()), self.output_queue.get_nowait())
 
                 if cv2.waitKey(25) & 0xFF == ord('q'): # Press 'q' to quit
                     break
@@ -163,10 +163,21 @@ class VideoPipeLine:
         return results
 
 
+    def resample_images(self, image_batch: dict, batch_size: int):
+
+        keys = list(image_batch.keys())
+
+        step = len(image_batch) / batch_size
+        resampled = {}
+        for i in range(batch_size):
+            idx = keys[int(i * step)]
+            resampled[idx] = image_batch[idx]
+
+        return resampled
 
 
     def pipeline(self):
-        yolo_postprocess = YoloPostProcess(confidence=0.5, iou=0.3, tracker=ByteTracker(frame_rate=10, track_high_thresh = 0.5, track_buffer=300,  new_track_thresh=0.6, fuse_score=0.4))
+        yolo_postprocess = YoloPostProcess(confidence=0.5, iou=0.3, tracker=ByteTracker(frame_rate=30, track_high_thresh = 0.5, track_buffer=500,  new_track_thresh=0.6, fuse_score=0.4))
 
         def lpr_postprocess(prediction):
             return lprnet_decode(np.expand_dims(prediction, 0))[0][0]
@@ -178,15 +189,20 @@ class VideoPipeLine:
 
         uuid_gen = IdGen(thread_id=threading.get_ident())
 
+        batch_len = 8
+
         while not self._stop:
 
             while not self.src_queue.empty():
                 image_batch[uuid_gen()] = self.src_queue.get_nowait()
 
             if not image_batch:
-                sleep(0.05)
+                sleep(0.01)
                 continue
 
+            if len(image_batch) > batch_len:
+                new_len = max(batch_len - (len(image_batch) - batch_len) // 2, 4)
+                image_batch = self.resample_images(image_batch, new_len)
 
             start = time()
 
@@ -259,26 +275,41 @@ class VideoPipeLine:
                     else:
                         description = ""
                     self.draw_box(img, prediction['box'], model_shape=self.yolo_shape, desc=description)
+                    # print(str(threading.get_ident()), ocr_filters[track_id].most_frequent())
                     self.output_queue.put(img)
 
             image_batch.clear()
             lpr_images.clear()
 
+            # print(f"{(time() - start) * 1000 / 8:.3f} ms")
+
 
 # import os
 # print(os.cpu_count())
 
-# threads_num = 6
+threads_num = 1
 
-# threads = [Thread(target=pipeline, daemon=True) for _ in range(threads_num)]
+threads = [VideoPipeLine("video.mp4", yolo_shape=Model_shape) for _ in range(threads_num)]
 
-# for t in threads:
-#     t.start()
-#     sleep(0.01)
+for t in threads:
+    t.start()
+    sleep(0.01)
 
 video_stream = VideoPipeLine("video.mp4", yolo_shape=Model_shape)
+# video_stream_2 = VideoPipeLine("video.mp4", yolo_shape=Model_shape)
 
-video_stream.start()
+
+# batch = {f"{x}": f"{x}" for x in range(24)}
+
+# print(batch)
+
+# resampled = video_stream.resample_images(batch, 8)
+
+# print(resampled)
+
+# video_stream.start()
+# video_stream_2.start()
 
 while True:
     sleep(1)
+    print(inf.batches_per_second())
