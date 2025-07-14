@@ -86,7 +86,7 @@ class VideoPipeLine:
             # frame = cv2.imread("vesta.png")
 
             self.src_queue.put(frame)
-            sleep(1 / self.fps)
+            sleep(5 / self.fps)
 
         # cap.release()
 
@@ -109,7 +109,7 @@ class VideoPipeLine:
 
 
             try:
-                # cv2.imshow(str(threading.get_ident()), self.output_queue.get_nowait())
+                cv2.imshow(str(threading.get_ident()), self.output_queue.get_nowait())
 
                 if cv2.waitKey(25) & 0xFF == ord('q'): # Press 'q' to quit
                     break
