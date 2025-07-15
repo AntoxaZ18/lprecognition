@@ -50,7 +50,7 @@ class LPRnetPreprocessor(ModelPreprocessor):
 
         rgb_batch = [cv2.cvtColor(image, cv2.COLOR_BGR2RGB) for image in rgb_batch]
 
-        resized_batch = [cv2.resize(img, (self.model_shape[1], self.model_shape[0])) for img in rgb_batch]
+        resized_batch = [cv2.resize(img, (self.model_shape[0], self.model_shape[1])) for img in rgb_batch]
 
         resized_batch = np.ascontiguousarray(np.stack(resized_batch))
 

@@ -9,6 +9,7 @@ from time import sleep, time
 
 import numpy as np
 import onnxruntime as ort
+import re
 
 from lprnet_postprocess import lprnet_decode
 from preprocess import (
@@ -143,6 +144,18 @@ class Inference():
     def batches_per_second(self):
         return self.perf_metric.batches_per_window
 
+    def model_img_size(self, model_name: str):
+        match = re.search(r'(\d+)x(\d+)', model_name)
+
+        if match:
+            height = match.group(1)
+            width = match.group(2)
+            return (height, width)
+        else:
+            return None
+
+
+
     def create_session(self, model_name: str, model_id: str, args=None) -> None:
         """
         load model and register preprocessor
@@ -245,24 +258,11 @@ class Inference():
 # inf = Inference(ModelLoadFS('./models'))
 # inf.create_session('ex8_c3k2_light_320_nwd_.onnx', "yolo_lp")
 # inf.create_session('stn_lpr_opt.onnx', "lpr_recognition")
-
 # inputs = np.arange(1, 10)
-
 # futures = [inf.submit_task("stn_lpr_opt.onnx", inputs, f"xxx_{i}") for i in range(10)]
-
 # for fut in futures:
 #     result = fut.result()
-
 # # result = futures.result()
-
 # print('ready res')
-
 # print(result)
-
 # sleep(1) 
-
-
-
-
-
-
