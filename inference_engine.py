@@ -148,9 +148,9 @@ class Inference():
         match = re.search(r'(\d+)x(\d+)', model_name)
 
         if match:
-            height = match.group(1)
-            width = match.group(2)
-            return (height, width)
+            width = int(match.group(1))
+            height = int(match.group(2))
+            return (width, height)
         else:
             return None
 
@@ -169,6 +169,17 @@ class Inference():
         # )
         # sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         # sess_options.inter_op_num_threads = 3
+
+        model_shape = self.model_img_size(model_name)
+
+        print(args)
+
+        if model_shape:
+            args["model_shape"] = model_shape
+
+        print("update", args)
+
+
 
         session = ort.InferenceSession(model, providers=self.providers, sess_options=sess_options)
 

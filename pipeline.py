@@ -15,12 +15,18 @@ from utils import CHARS, IdGen
 
 
 class VideoPipeLine:
-    def __init__(self, video_source: str, inference: Inference, yolo_shape=(640, 640)):
+    def __init__(
+        self,
+        video_source: str,
+        inference: Inference,
+        config: dict,
+        output_queue = None,
+        rgb_out = True
+    ):
         self.source = video_source
         self._stop = False
         self.src_queue = Queue()
-        self.output_queue = Queue()
-        self.yolo_shape = yolo_shape
+        self.sink = output_queue
 
         self.src = Thread(target=self.read_thread, daemon=True)
         self.process = Thread(target=self.pipeline, daemon=True)
@@ -29,6 +35,25 @@ class VideoPipeLine:
         self.weight = None
         self.height = None
         self.inference = inference
+        self.rgb_out = rgb_out
+
+        self.stages = {}
+
+        for stage, stage_cfg in config.items():
+            name = stage_cfg["name"]
+            model = stage_cfg["model"]
+            args = stage_cfg.get("args", {})
+            self.stages[stage] = name
+
+            self.inference.create_session(model, name, args=args)
+            self.inference.create_session(model, name, args=args)
+
+        if ("320" in config["1"]["model"]):
+            self.detect_model_shape = (320, 320)
+        elif ("640" in config["1"]["model"]):
+            self.detect_model_shape = (640, 640)
+
+        print(self.stages)
 
     def read_thread(self):
         cap = cv2.VideoCapture(self.source)
@@ -37,14 +62,6 @@ class VideoPipeLine:
 
         self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-
-        # print(self.fps, total_frames)
-
-        # img = cv2.imread("LPR.png")
-        # print(img.shape)
-
-        # self.height = img.shape[0]
-        # self.width = img.shape[1]
 
         # preallocate arrays
         cv_readed = np.zeros(
@@ -63,7 +80,7 @@ class VideoPipeLine:
     def start(self):
         self.src.start()
         self.process.start()
-        self.video.start()
+        # self.video.start()
 
     def show_video(self):
         count = 0
@@ -76,7 +93,7 @@ class VideoPipeLine:
             #     print(e)
 
             try:
-                cv2.imshow("Test", self.output_queue.get_nowait())
+                cv2.imshow("Test", self.sink.get_nowait())
 
                 if cv2.waitKey(25) & 0xFF == ord("q"):  # Press 'q' to quit
                     break
@@ -85,7 +102,7 @@ class VideoPipeLine:
 
             sleep(1 / self.fps)
 
-    def kill(self):
+    def stop(self):
         self._stop = True
 
     def draw_box(
@@ -118,7 +135,9 @@ class VideoPipeLine:
     ) -> dict[str, dict]:
         results = {}
         futures = [
-            self.inference.submit_task(model_id=model_id, model_inputs=image, task_id=uuid)
+            self.inference.submit_task(
+                model_id=model_id, model_inputs=image, task_id=uuid
+            )
             for uuid, image in image_batch.items()
         ]
 
@@ -148,7 +167,7 @@ class VideoPipeLine:
             confidence=0.5,
             iou=0.3,
             tracker=ByteTracker(
-                frame_rate=30,
+                frame_rate=50,
                 track_high_thresh=0.5,
                 track_buffer=500,
                 new_track_thresh=0.6,
@@ -181,7 +200,7 @@ class VideoPipeLine:
 
             start = time()
 
-            yolo_predicts = self.run_inference("yolo_lp", image_batch, yolo_postprocess)
+            yolo_predicts = self.run_inference(self.stages["1"], image_batch, yolo_postprocess)
 
             # print("yolo_predicts", yolo_predicts)
 
@@ -205,22 +224,22 @@ class VideoPipeLine:
                         ocr_filters[track] = ocr_filters.get(track, PlateFilter())
 
                         box = crop_image(
-                            img, detection["box"], model_shape=self.yolo_shape
+                            img, detection["box"], model_shape=self.detect_model_shape
                         )
 
                         lpr_images[object_uuid] = box
                         lpr_track[object_uuid] = detection  # connect lpr with track
+                        # cv2.imwrite('crop.png', box)
 
                 # print(len(result))
 
                 # print(len(results["boxes"]), len(results["track_id"]), len(results["track_id"]))
-                # cv2.imwrite('crop.png', tiles[0])
 
             # print("lpr_images", lpr_images.keys())
             # print("lpr_track", lpr_track)
 
             lpr_predicts = self.run_inference(
-                "lpr_recognition", lpr_images, lpr_postprocess
+                self.stages["2"], lpr_images, lpr_postprocess
             )
 
             for object_uuid, decoded in lpr_predicts.items():
@@ -263,11 +282,15 @@ class VideoPipeLine:
                     self.draw_box(
                         img,
                         prediction["box"],
-                        model_shape=self.yolo_shape,
+                        model_shape=self.detect_model_shape,
                         desc=description,
                     )
                     # print(str(threading.get_ident()), ocr_filters[track_id].most_frequent())
-                    self.output_queue.put(img)
+
+                if self.rgb_out:
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+                self.sink.put(img)
 
             image_batch.clear()
             lpr_images.clear()

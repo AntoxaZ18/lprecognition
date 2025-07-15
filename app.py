@@ -2,6 +2,10 @@ import os
 import sys
 from queue import Queue
 
+from pipeline import VideoPipeLine
+from render import Render
+from inference_engine import Inference, ModelLoadFS
+
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
@@ -19,9 +23,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+
 # from consumers import OnnxThread, VideoThread
 # from model_onnx import get_providers
-# from render import Render
 # from resample_queue import ResampleQueue
 
 
@@ -182,15 +186,27 @@ class VideoWindow(QMainWindow):
             return
 
 
-        self.video_thread = VideoThread(self.frame_queue, self.video_source.text())
-        self.video_thread.position_signal.connect(self.update_slider_position)
+        config = {
+            "1": {
+                "name": "yolo_lp",
+                # "model": "ex6_c3k2_light_640x640.onnx",
+                "model": "ex8_c3k2_light_320_nwd_320x320.onnx",
 
-        self.onnx_thread = OnnxThread(self.frame_queue, self.render_queue, **onnx_cfg)
+                "args": {"bgr": True}
+            },
+            "2": {
+                "name": "lpr_recognition",
+                "model": "stn_lpr_opt_final_94x24.onnx",
+            }
+        }
+
+        inf = Inference(ModelLoadFS('./models'))
+
+        self.video_thread = VideoPipeLine("video.mp4", inf, config, output_queue=self.render_queue)
 
         self.render_thread = Render(self.render_queue, 1920 // 2, 1080 // 2)
         self.render_thread.update_pixmap_signal.connect(self.refresh_image) #update image on updating frame
 
-        self.onnx_thread.start()
         self.video_thread.start()
         self.render_thread.start()
 
@@ -200,13 +216,6 @@ class VideoWindow(QMainWindow):
     def stop_video(self):
         if self.video_thread:
             self.video_thread.stop()
-            self.video_thread.quit()
-            self.video_thread.wait()
-
-        if self.onnx_thread:
-            self.onnx_thread.stop()
-            self.onnx_thread.quit()
-            self.onnx_thread.wait()
 
         if self.render_thread:
             self.render_thread.stop()
@@ -263,8 +272,7 @@ class VideoWindow(QMainWindow):
     def closeEvent(self, event):
         if self.video_thread:
             self.video_thread.stop()
-            self.video_thread.quit()
-            self.video_thread.wait()
+
 
         if self.onnx_thread:
             self.onnx_thread.stop()

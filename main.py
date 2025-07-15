@@ -7,11 +7,9 @@ from time import sleep, time
 from pipeline import VideoPipeLine
 
 
-Model_shape = (320, 320)
 
 inf = Inference(ModelLoadFS('./models'))
-inf.create_session('ex6_c3k2_light_640x640.onnx', "yolo_lp", args = {"model_shape": Model_shape, "bgr":True})
-inf.create_session('stn_lpr_opt_final_94x24.onnx', "lpr_recognition", args = {"model_shape":(94, 24)})
+
 
 
 threads_num = 1
@@ -22,18 +20,22 @@ threads_num = 1
 #     t.start()
 #     sleep(0.01)
 
-video_stream = VideoPipeLine("video.mp4", inf, yolo_shape=Model_shape)
-# video_stream_2 = VideoPipeLine("video.mp4", yolo_shape=Model_shape)
+config = {
+    "1": {
+        "name": "yolo_lp",
+        # "model": "ex6_c3k2_light_640x640.onnx",
+        "model": "ex8_c3k2_light_320_nwd_320x320.onnx",
+
+        "args": {"bgr": True}
+    },
+    "2": {
+        "name": "lpr_recognition",
+        "model": "stn_lpr_opt_final_94x24.onnx",
+    }
+}
 
 
-# batch = {f"{x}": f"{x}" for x in range(24)}
-
-# print(batch)
-
-# resampled = video_stream.resample_images(batch, 8)
-
-# print(resampled)
-
+video_stream = VideoPipeLine("video.mp4", inf, config)
 video_stream.start()
 # video_stream_2.start()
 
