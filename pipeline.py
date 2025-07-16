@@ -13,6 +13,32 @@ from preprocess import PlateFilter, YoloPostProcess, crop_image
 from tracker import ByteTracker
 from utils import CHARS, IdGen
 
+from collections import deque
+
+class ResultFilter():
+    def __init__(self, length = 10):
+        self.max_size = length
+        self._queue = deque(maxlen=length)
+        self._set = set()
+
+    def add(self, item):
+        '''
+        return item if result is new None if result exists
+        '''
+        if item in self._set:
+            return  
+        if len(self._set) >= self.max_size:
+            oldest = self._queue.popleft()
+            self._set.remove(oldest)
+        self._set.add(item)
+        self._queue.append(item)
+
+        return item
+
+
+    def __contains__(self, item):
+        return item in self._set
+
 
 class VideoPipeLine:
     def __init__(
@@ -21,6 +47,7 @@ class VideoPipeLine:
         inference: Inference,
         config: dict,
         output_queue = None,
+        result_queue: Queue = None,
         rgb_out = True
     ):
         self.source = video_source
@@ -36,6 +63,8 @@ class VideoPipeLine:
         self.height = None
         self.inference = inference
         self.rgb_out = rgb_out
+        self.result_queue = result_queue
+        self.result_filter = ResultFilter()
 
         self.stages = {}
 
@@ -75,7 +104,7 @@ class VideoPipeLine:
                 self.src_queue.put(frame)
 
             self.src_queue.put(frame)
-            sleep(2 / self.fps)
+            sleep(1 / self.fps)
 
     def start(self):
         self.src.start()
@@ -279,12 +308,20 @@ class VideoPipeLine:
                         )
                     else:
                         description = ""
+
                     self.draw_box(
                         img,
                         prediction["box"],
                         model_shape=self.detect_model_shape,
                         desc=description,
                     )
+
+                    if track_id and ocr_filters[track_id].most_frequent() and self.result_queue:
+
+                        filtered_result = self.result_filter.add(track_id)
+                        if filtered_result:
+                            self.result_queue.put(ocr_filters[track_id].most_frequent())
+
                     # print(str(threading.get_ident()), ocr_filters[track_id].most_frequent())
 
                 if self.rgb_out:

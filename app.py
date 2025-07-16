@@ -2,15 +2,12 @@ import os
 import sys
 from queue import Queue
 
-from pipeline import VideoPipeLine
-from render import Render
 from inference_engine import Inference, ModelLoadFS
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
-    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -23,16 +20,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-
-# from consumers import OnnxThread, VideoThread
-# from model_onnx import get_providers
-# from resample_queue import ResampleQueue
+from pipeline import VideoPipeLine
+from saver import SaverEngine, SQLSaver
+from render import Render
 
 
 class cQLineEdit(QLineEdit):
     """
     clickable qLineEdit
     """
+
     clicked = pyqtSignal()
 
     def __init__(self, widget):
@@ -64,34 +61,6 @@ class VideoWindow(QMainWindow):
         self.video_source = cQLineEdit(self.central_widget)
         self.video_source.clicked.connect(self.choose_source)
 
-        self.models_label = QLabel(self)
-        self.models_label.setText("Модели")
-        self.model_folder = cQLineEdit(self.central_widget)
-        self.model_folder.setText(".")
-        self.model_folder.clicked.connect(self.choose_model_folder)
-
-        self.device_label = QLabel(self)
-        self.model_file = QComboBox()
-
-        self.model_file.addItems(
-            [i for i in os.listdir(self.model_folder.text()) if i.endswith(".onnx")]
-        )
-
-        #confidence
-        self.conf_value = QLabel(self)
-        self.conf_value.setText("Confidence %")
-        self.conf = QSlider(self)
-        self.conf.setOrientation(Qt.Orientation.Horizontal)
-        self.conf.setMaximum(100)
-        self.conf.setValue(50)
-        self.conf.setMinimum(10)
-        self.conf.setTickInterval(1)
-
-        self.conf.valueChanged.connect(
-            lambda value: self.conf_value.setText(f"Confidence {self.conf.value()} %")
-        )
-
-
         self.start_button = QPushButton("Старт")
         self.start_button.clicked.connect(self.start_video)
         self.stop_button = QPushButton("Стоп")
@@ -106,27 +75,11 @@ class VideoWindow(QMainWindow):
         control_layout = QVBoxLayout()
         control_layout.addWidget(self.file_label)
         control_layout.addWidget(self.video_source)
-        control_layout.addWidget(self.models_label)
-        control_layout.addWidget(self.model_folder)
-        control_layout.addWidget(self.model_file)
-        control_layout.addWidget(self.device_label)
-        control_layout.addWidget(self.conf_value)
 
-        control_layout.addWidget(self.conf)
         control_layout.addWidget(self.start_button)
         control_layout.addWidget(self.stop_button)
         control_layout.addWidget(self.perf_label)
         control_layout.addWidget(self.video_fps)
-
-        self.time_slider = QSlider(Qt.Orientation.Horizontal, self.central_widget)
-        self.time_slider.setMinimum(0)
-        self.time_slider.setMaximum(1000)
-        self.time_slider.valueChanged.connect(self.on_time_changed)
-
-        self.time_label = QLabel("00:00 / 00:00", self.central_widget)
-        self.time_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.time_label.setStyleSheet("QLabel { padding: 2px; }")
-        self.time_label.setFixedHeight(20)
 
         # ------------------------------------------------
         control_widget = QWidget()
@@ -135,12 +88,6 @@ class VideoWindow(QMainWindow):
 
         video_layout = QVBoxLayout()
         video_layout.addWidget(self.image_label)
-
-        time_layout = QHBoxLayout()
-        time_layout.addWidget(self.time_slider)
-        time_layout.addWidget(self.time_label)
-
-        video_layout.addLayout(time_layout)
 
         central_layout = QHBoxLayout()
         central_layout.addLayout(video_layout)
@@ -154,58 +101,50 @@ class VideoWindow(QMainWindow):
 
         self.qt_img = None
 
-        # self.frame_queue = ResampleQueue()
         self.render_queue = Queue()
+        self.result_queue = Queue()
         self.video_thread = None
         self.onnx_thread = None
         self.render_thread = None
+        self.saver_handler = None
 
-    def update_slider_position(self, pos):
-        self.time_slider.blockSignals(True)
-        self.time_slider.setValue(pos)
-        self.time_slider.blockSignals(False)
-
-        duration = self.video_thread.duration
-
-        pos = duration * pos / 1000
-        mins = int(pos // 60)
-        secs = int(pos % 60)
-
-        self.time_label.setText(
-            f"{mins}:{str(secs).zfill(2)} / {str(duration // 60).zfill(2)}:{str(duration % 60).zfill(2)}"
-        )
-
-    def on_time_changed(self, pos):
-        self.video_thread.set_position(pos)
-        if self.render_thread:
-            self.render_thread.reset_buf()
 
     def start_video(self):
         if not self.video_source.text():
             QMessageBox.warning(self, "Warning", "Нужно выбрать файл")
             return
 
-
         config = {
             "1": {
                 "name": "yolo_lp",
                 # "model": "ex6_c3k2_light_640x640.onnx",
                 "model": "ex8_c3k2_light_320_nwd_320x320.onnx",
-
-                "args": {"bgr": True}
+                "args": {"bgr": True},
             },
             "2": {
                 "name": "lpr_recognition",
                 "model": "stn_lpr_opt_final_94x24.onnx",
-            }
+            },
         }
 
-        inf = Inference(ModelLoadFS('./models'))
+        inf = Inference(ModelLoadFS("./models"))
 
-        self.video_thread = VideoPipeLine("video.mp4", inf, config, output_queue=self.render_queue)
+        self.video_thread = VideoPipeLine(
+            self.video_source.text(),
+            inf,
+            config,
+            output_queue=self.render_queue,
+            result_queue=self.result_queue,
+        )
+
+
+        saver = SQLSaver('sqlite:///events.db')
+        self.saver_handler = SaverEngine(saver, self.result_queue)
 
         self.render_thread = Render(self.render_queue, 1920 // 2, 1080 // 2)
-        self.render_thread.update_pixmap_signal.connect(self.refresh_image) #update image on updating frame
+        self.render_thread.update_pixmap_signal.connect(
+            self.refresh_image
+        )  # update image on updating frame
 
         self.video_thread.start()
         self.render_thread.start()
@@ -219,7 +158,6 @@ class VideoWindow(QMainWindow):
 
         if self.render_thread:
             self.render_thread.stop()
-
 
     def choose_model_folder(self):
         options = QFileDialog.Option.DontUseNativeDialog
@@ -261,7 +199,9 @@ class VideoWindow(QMainWindow):
     def scale_image(self):
         if self.qt_img is not None:
             scaled_pixmap = self.qt_img.scaled(
-                self.image_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                self.image_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
             )
             self.image_label.setPixmap(scaled_pixmap)
 
@@ -273,11 +213,8 @@ class VideoWindow(QMainWindow):
         if self.video_thread:
             self.video_thread.stop()
 
-
-        if self.onnx_thread:
-            self.onnx_thread.stop()
-            self.onnx_thread.quit()
-            self.onnx_thread.wait()
+        if self.saver_handler:
+            self.saver_handler.stop()
 
         if self.render_thread:
             self.render_thread.stop()

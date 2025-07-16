@@ -7,3 +7,6 @@
 *.mp4
 *.pyc
 /models
+*.db
+*.exe
+*.spec

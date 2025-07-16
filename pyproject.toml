@@ -6,14 +6,14 @@ authors = [
     {name = "Anton",email = "antoxaz18@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11, <3.13"
 
 
 [tool.poetry]
 package-mode = false
 
 [tool.poetry.dependencies]
-numpy = "^2"
+numpy = "<2.0"
 pyyaml = "^6.0.2"
 pybind11 = "^2.13.6"
 wheel = "^0.45.1"
@@ -21,13 +21,19 @@ setuptools = "^80.9.0"
 onnx = "^1.18.0"
 onnxscript = "^0.3.0"
 opencv-python = "^4.11.0.86"
-onnxruntime = "^1.22.0"
+onnxruntime = "1.18.0"
 pillow = "^11.2.1"
 fastuuid = "^0.12.0"
 scipy = "^1.16.0"
 lap = "^0.5.12"
 pyqt6 = "^6.9.1"
+pyinstaller = "^6.14.2"
+sqlalchemy = "^2.0.41"
 
+
+[tool.poetry.scripts]
+#build exe with pyinstaller
+build-script = "build:install"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

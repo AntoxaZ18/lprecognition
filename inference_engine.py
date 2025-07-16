@@ -1,4 +1,5 @@
 import os
+import re
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -9,7 +10,6 @@ from time import sleep, time
 
 import numpy as np
 import onnxruntime as ort
-import re
 
 from lprnet_postprocess import lprnet_decode
 from preprocess import (

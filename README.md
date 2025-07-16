@@ -59,12 +59,14 @@
    ```Powershell
    poetry env activate
    ```
-   Для сборки в exe файл (будет находиться в папке dist):
-   ```Powershell
-   poetry run build-script 
-   ```
+
 # Пример работы
 Скриншот
 
 # Сборка приложения
 Скрипт для сборки 
+
+   exe файл (будет находиться в папке dist):
+      ```Powershell
+   poetry run build.py
+   ```
