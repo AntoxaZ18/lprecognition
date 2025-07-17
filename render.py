@@ -54,22 +54,33 @@ class Render(QThread):
         mean_fill = self.source.qsize()
         self.cnt += 1
 
+
+
         #update render timer interval
         if self.cnt % 10 == 0:
+            # print(self.update_interval)
+            # print("f:", mean_fill)s
             error = mean_fill - self.fifo_fill_level
-            err = error * 0.002
+            # if error > 0:
+            #     print("^")
+            # else:
+            #     print("v")
+            err = error * 0.001
             self.update_interval *= 1 - err
-            self.update_interval = int(self.update_interval)
+            interval = int(self.update_interval)
 
-            if self.update_interval < 5:
-                self.update_interval = 5
+            # print("err", self.update_interval)
+            # print("err", self.update_interval)
 
-            if self.update_interval > 120:
-                self.update_interval = 120
+            if interval < 5:
+                interval = 5
 
-            self.frame_fps.append(1000 / self.update_interval)
+            if interval > 120:
+                interval = 120
 
-            self.timer.setInterval(self.update_interval)
+            self.frame_fps.append(1000 / interval)
+
+            self.timer.setInterval(interval)
 
         sleep(0.01)
 

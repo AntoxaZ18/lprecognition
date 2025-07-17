@@ -141,6 +141,7 @@ class Inference():
         self.worker_thread = Thread(target=self._worker, daemon=True)
         self.worker_thread.start()
 
+    @property
     def batches_per_second(self):
         return self.perf_metric.batches_per_window
 

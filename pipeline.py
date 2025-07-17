@@ -87,7 +87,8 @@ class VideoPipeLine:
     def read_thread(self):
         cap = cv2.VideoCapture(self.source)
         self.fps = int(cap.get(cv2.CAP_PROP_FPS))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        print(self.fps)
 
         self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -104,7 +105,7 @@ class VideoPipeLine:
                 self.src_queue.put(frame)
 
             self.src_queue.put(frame)
-            sleep(1 / self.fps)
+            sleep(2 / self.fps)
 
     def start(self):
         self.src.start()
@@ -193,13 +194,14 @@ class VideoPipeLine:
 
     def pipeline(self):
         yolo_postprocess = YoloPostProcess(
-            confidence=0.5,
-            iou=0.3,
+            confidence=0.3,
+            iou=0.2,
             tracker=ByteTracker(
-                frame_rate=50,
+                frame_rate=10,
                 track_high_thresh=0.5,
+                track_low_thresh=0.1,
                 track_buffer=500,
-                new_track_thresh=0.6,
+                new_track_thresh=0.7,
                 fuse_score=0.4,
             ),
         )
@@ -214,6 +216,8 @@ class VideoPipeLine:
         uuid_gen = IdGen(thread_id=get_ident())
 
         batch_len = 8
+
+        lpr_track = {}
 
         while not self._stop:
             while not self.src_queue.empty():
@@ -237,7 +241,7 @@ class VideoPipeLine:
                 sorted(image_batch.items())
             )  # sort dict of images by uuid / timestamp
 
-            lpr_track = {}
+            
             for uuid, img in image_batch.items():
                 result = yolo_predicts[uuid]
 

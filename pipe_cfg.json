@@ -1,0 +1,11 @@
+{
+    "1": {
+        "name": "yolo_lp",
+        "model": "ex8_c3k2_light_320_nwd_320x320.onnx",
+        "args": {"bgr": true}
+    },
+    "2": {
+        "name": "lpr_recognition",
+        "model": "stn_lpr_opt_final_94x24.onnx"
+    }
+}

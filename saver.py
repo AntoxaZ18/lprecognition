@@ -37,7 +37,6 @@ class SQLSaver:
             try:
                 session.add(data)
                 session.commit()
-                print("OK")
             except Exception as e:
                 session.rollback()
                 print(e)

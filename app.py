@@ -1,6 +1,7 @@
 import os
 import sys
 from queue import Queue
+import json
 
 from inference_engine import Inference, ModelLoadFS
 
@@ -56,7 +57,7 @@ class VideoWindow(QMainWindow):
         self.image_label = QLabel(self)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.file_label = QLabel(self)
+        self.file_label = QLabel(self.central_widget)
         self.file_label.setText("Видеофайл")
         self.video_source = cQLineEdit(self.central_widget)
         self.video_source.clicked.connect(self.choose_source)
@@ -81,6 +82,8 @@ class VideoWindow(QMainWindow):
         control_layout.addWidget(self.perf_label)
         control_layout.addWidget(self.video_fps)
 
+        control_layout.setSpacing(5)  # уменьшает пространство между элементами
+
         # ------------------------------------------------
         control_widget = QWidget()
         control_widget.setLayout(control_layout)
@@ -95,7 +98,7 @@ class VideoWindow(QMainWindow):
 
         # Устанавливаем растяжку для метки с видео
         central_layout.setStretchFactor(video_layout, 1)
-        central_layout.setStretchFactor(control_widget, 0)
+        # central_layout.setStretchFactor(control_widget, 0)
 
         self.central_widget.setLayout(central_layout)
 
@@ -107,6 +110,7 @@ class VideoWindow(QMainWindow):
         self.onnx_thread = None
         self.render_thread = None
         self.saver_handler = None
+        self.inf = None
 
 
     def start_video(self):
@@ -114,24 +118,13 @@ class VideoWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Нужно выбрать файл")
             return
 
-        config = {
-            "1": {
-                "name": "yolo_lp",
-                # "model": "ex6_c3k2_light_640x640.onnx",
-                "model": "ex8_c3k2_light_320_nwd_320x320.onnx",
-                "args": {"bgr": True},
-            },
-            "2": {
-                "name": "lpr_recognition",
-                "model": "stn_lpr_opt_final_94x24.onnx",
-            },
-        }
+        config = json.load(open("pipe_cfg.json", "r", encoding="utf-8"))
 
-        inf = Inference(ModelLoadFS("./models"))
+        self.inf = Inference(ModelLoadFS("./models"))
 
         self.video_thread = VideoPipeLine(
             self.video_source.text(),
-            inf,
+            self.inf,
             config,
             output_queue=self.render_queue,
             result_queue=self.result_queue,
@@ -144,7 +137,7 @@ class VideoWindow(QMainWindow):
         self.render_thread = Render(self.render_queue, 1920 // 2, 1080 // 2)
         self.render_thread.update_pixmap_signal.connect(
             self.refresh_image
-        )  # update image on updating frame
+        )  
 
         self.video_thread.start()
         self.render_thread.start()
@@ -184,8 +177,8 @@ class VideoWindow(QMainWindow):
             self.video_source.setText(file_name)
 
     def update_fps(self):
-        if self.onnx_thread and self.render_thread:
-            self.perf_label.setText(f"Network: {self.onnx_thread.fps} FPS")
+        if self.video_thread  and self.render_thread:
+            self.perf_label.setText(f"inference: {self.inf.batches_per_second} BPS")
             self.video_fps.setText(f"Rendering: {self.render_thread.fps:.2f} FPS")
 
     def refresh_image(self, cv_img):
