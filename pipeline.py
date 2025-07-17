@@ -103,9 +103,7 @@ class VideoPipeLine:
             ret, frame = cap.read(cv_readed)
             if ret:
                 self.src_queue.put(frame)
-
-            self.src_queue.put(frame)
-            sleep(2 / self.fps)
+                sleep(2 / self.fps)
 
     def start(self):
         self.src.start()
@@ -194,15 +192,15 @@ class VideoPipeLine:
 
     def pipeline(self):
         yolo_postprocess = YoloPostProcess(
-            confidence=0.3,
-            iou=0.2,
+            confidence=0.2,
+            iou=0.1,
             tracker=ByteTracker(
-                frame_rate=10,
-                track_high_thresh=0.5,
-                track_low_thresh=0.1,
-                track_buffer=500,
+                frame_rate=15,
+                track_high_thresh=0.5, #Порог уверенности для начала трека
+                track_low_thresh=0.2,
+                track_buffer=150,
                 new_track_thresh=0.7,
-                fuse_score=0.4,
+                fuse_score=0.2,
             ),
         )
 
@@ -236,6 +234,7 @@ class VideoPipeLine:
             yolo_predicts = self.run_inference(self.stages["1"], image_batch, yolo_postprocess)
 
             # print("yolo_predicts", yolo_predicts)
+
 
             image_batch = dict(
                 sorted(image_batch.items())
@@ -333,7 +332,10 @@ class VideoPipeLine:
 
                 self.sink.put(img)
 
+
             image_batch.clear()
             lpr_images.clear()
+
+            sleep(0.01)
 
             # print(f"{(time() - start) * 1000 / 8:.3f} ms")

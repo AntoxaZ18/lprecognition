@@ -74,6 +74,7 @@ class VideoWindow(QMainWindow):
         self.video_fps.setText("0 FPS")
 
         control_layout = QVBoxLayout()
+        control_layout.addStretch()
         control_layout.addWidget(self.file_label)
         control_layout.addWidget(self.video_source)
 
@@ -82,7 +83,7 @@ class VideoWindow(QMainWindow):
         control_layout.addWidget(self.perf_label)
         control_layout.addWidget(self.video_fps)
 
-        control_layout.setSpacing(5)  # уменьшает пространство между элементами
+        # control_layout.setSpacing(5)  # уменьшает пространство между элементами
 
         # ------------------------------------------------
         control_widget = QWidget()

@@ -81,7 +81,7 @@ class BatchCounter:
         return len(self.batches)
 
 class BatchManager:
-    def __init__(self, batch_size: int = 8, timeout: float = 0.1):
+    def __init__(self, batch_size: int = 8, timeout: float = 0.05):
         self.batch_size = batch_size
         self.timeout_sec = timeout
         self.batches = defaultdict(list)
@@ -216,6 +216,7 @@ class Inference():
                     tasks = self.batch_manager.get(task.model_id)
                     self.pool.submit(self._process_batch, tasks)
                     # self._process_batch(tasks)
+                    sleep(0.01)
 
             # Проверяем, есть ли незавершённые батчи
             for model_id in self.batch_manager:
