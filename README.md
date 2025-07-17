@@ -67,6 +67,6 @@
 Скрипт для сборки 
 
    exe файл (будет находиться в папке dist):
-      ```Powershell
+   ```Powershell
    poetry run build.py
    ```
