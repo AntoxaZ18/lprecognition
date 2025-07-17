@@ -10,3 +10,5 @@
 *.db
 *.exe
 *.spec
+
+!app_screen.png
