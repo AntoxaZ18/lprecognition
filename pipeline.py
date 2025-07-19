@@ -103,6 +103,8 @@ class VideoPipeLine:
             ret, frame = cap.read(cv_readed)
             if ret:
                 self.src_queue.put(frame)
+                # self.sink.put(frame)
+
                 sleep(2 / self.fps)
 
     def start(self):

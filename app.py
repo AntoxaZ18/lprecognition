@@ -16,10 +16,11 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QSlider,
     QVBoxLayout,
     QWidget,
+    QGridLayout
 )
+
 
 from pipeline import VideoPipeLine
 from saver import SaverEngine, SQLSaver
@@ -40,6 +41,67 @@ class cQLineEdit(QLineEdit):
         self.clicked.emit()
 
 
+class PipeShow():
+    def __init__(self, video_src: str, inference: Inference, config: dict, result_queue: Queue, callback):
+
+        self.render_frame_queue = Queue()
+        self.video_pipe = VideoPipeLine(
+            video_src,
+            inference,
+            config,
+            output_queue=self.render_frame_queue,
+            result_queue=result_queue,
+        )
+        self.renderer = Render(self.render_frame_queue, 1920 // 2, 1080 // 2)
+
+        self.renderer.update_pixmap_signal.connect(callback)
+
+    def start(self):
+        self.video_pipe.start()
+        self.renderer.start()
+
+    def stop(self):
+        self.video_pipe.stop()
+        self.renderer.stop()
+        
+
+class VideoWidget(QWidget):
+    FIXED_WIDTH = 640
+    FIXED_HEIGHT = 360
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.image_label = QLabel(self)
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setMinimumSize(self.FIXED_WIDTH, self.FIXED_HEIGHT)
+        self.image_label.setStyleSheet("background-color: black;")  # Опционально
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.image_label)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+
+        self.qt_img = None
+
+    def update_frame(self, cv_img):
+        self.qt_img = QPixmap.fromImage(cv_img)
+        self.image_label.setPixmap(self.qt_img.scaled(
+            self.image_label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        ))
+
+    def resizeEvent(self, event):
+        if self.qt_img:
+            self.image_label.setPixmap(self.qt_img.scaled(
+                self.image_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            ))
+        super().resizeEvent(event)
+
+
 class VideoWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -54,8 +116,9 @@ class VideoWindow(QMainWindow):
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
 
-        self.image_label = QLabel(self)
-        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_grid = QGridLayout()
+        self.video_widgets = []  # список VideoWidget
+        self.video_threads = []  # список потоков
 
         self.file_label = QLabel(self.central_widget)
         self.file_label.setText("Видеофайл")
@@ -74,44 +137,42 @@ class VideoWindow(QMainWindow):
         self.video_fps.setText("0 FPS")
 
         control_layout = QVBoxLayout()
-        control_layout.addStretch()
         control_layout.addWidget(self.file_label)
         control_layout.addWidget(self.video_source)
-
         control_layout.addWidget(self.start_button)
         control_layout.addWidget(self.stop_button)
         control_layout.addWidget(self.perf_label)
         control_layout.addWidget(self.video_fps)
-
-        # control_layout.setSpacing(5)  # уменьшает пространство между элементами
+        control_layout.addStretch()
 
         # ------------------------------------------------
         control_widget = QWidget()
         control_widget.setLayout(control_layout)
         control_widget.setMaximumWidth(200)
 
-        video_layout = QVBoxLayout()
-        video_layout.addWidget(self.image_label)
+        # --- Основной layout ---
+        main_layout = QHBoxLayout()
+        main_layout.addLayout(self.video_grid)
+        main_layout.addWidget(control_widget)
 
-        central_layout = QHBoxLayout()
-        central_layout.addLayout(video_layout)
-        central_layout.addWidget(control_widget)
+        self.central_widget.setLayout(main_layout)
 
         # Устанавливаем растяжку для метки с видео
-        central_layout.setStretchFactor(video_layout, 1)
+        # central_layout.setStretchFactor(video_layout, 1)
         # central_layout.setStretchFactor(control_widget, 0)
 
-        self.central_widget.setLayout(central_layout)
+        # self.central_widget.setLayout(central_layout)
 
-        self.qt_img = None
+        # self.qt_img = None
 
-        self.render_queue = Queue()
         self.result_queue = Queue()
-        self.video_thread = None
-        self.onnx_thread = None
-        self.render_thread = None
-        self.saver_handler = None
-        self.inf = None
+        self.inf = Inference(ModelLoadFS("./models"))
+        self.saver = SQLSaver('sqlite:///events.db')
+        self.saver_handler = SaverEngine(self.saver, self.result_queue)
+
+        self.timer.timeout.connect(self.update_fps)
+        self.timer.start(1000)  # время обновления FPS in ms
+        
 
 
     def start_video(self):
@@ -119,39 +180,32 @@ class VideoWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Нужно выбрать файл")
             return
 
+        # Создаем виджет для видео
+        video_widget = VideoWidget()
+        self.video_widgets.append(video_widget)
+        row = len(self.video_widgets) - 1
+        self.video_grid.addWidget(video_widget, row // 2, row % 2)  # 2 колонки
+
+
         config = json.load(open("pipe_cfg.json", "r", encoding="utf-8"))
-
-        self.inf = Inference(ModelLoadFS("./models"))
-
-        self.video_thread = VideoPipeLine(
+        pipe = PipeShow(
             self.video_source.text(),
             self.inf,
             config,
-            output_queue=self.render_queue,
-            result_queue=self.result_queue,
+            self.result_queue,
+            video_widget.update_frame
         )
 
+        self.video_threads.append(pipe)
 
-        saver = SQLSaver('sqlite:///events.db')
-        self.saver_handler = SaverEngine(saver, self.result_queue)
+        pipe.start()
 
-        self.render_thread = Render(self.render_queue, 1920 // 2, 1080 // 2)
-        self.render_thread.update_pixmap_signal.connect(
-            self.refresh_image
-        )  
-
-        self.video_thread.start()
-        self.render_thread.start()
-
-        self.timer.timeout.connect(self.update_fps)
-        self.timer.start(1000)  # время обновления FPS in ms
 
     def stop_video(self):
-        if self.video_thread:
-            self.video_thread.stop()
-
-        if self.render_thread:
-            self.render_thread.stop()
+        if self.video_threads:
+            for thread in self.video_threads:
+                thread.stop()
+        self.video_threads.clear()
 
     def choose_model_folder(self):
         options = QFileDialog.Option.DontUseNativeDialog
@@ -178,40 +232,40 @@ class VideoWindow(QMainWindow):
             self.video_source.setText(file_name)
 
     def update_fps(self):
-        if self.video_thread  and self.render_thread:
+        if self.video_threads:
             self.perf_label.setText(f"inference: {self.inf.batches_per_second} BPS")
-            self.video_fps.setText(f"Rendering: {self.render_thread.fps:.2f} FPS")
+            total_fps = sum([thread.renderer.fps for thread in self.video_threads])
+            self.video_fps.setText(f"Rendering: {total_fps:.2f} FPS")
 
     def refresh_image(self, cv_img):
         self.qt_img = QPixmap.fromImage(cv_img)
         self.image_label.setPixmap(self.qt_img)
         original_size = self.qt_img.size()
 
-        self.scale_image()
+        # self.scale_image()
         self.setMinimumSize(original_size.width(), original_size.height())
 
-    def scale_image(self):
-        if self.qt_img is not None:
-            scaled_pixmap = self.qt_img.scaled(
-                self.image_label.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self.image_label.setPixmap(scaled_pixmap)
+    # def scale_image(self):
+    #     if self.qt_img is not None:
+    #         scaled_pixmap = self.qt_img.scaled(
+    #             self.image_label.size(),
+    #             Qt.AspectRatioMode.KeepAspectRatio,
+    #             Qt.TransformationMode.SmoothTransformation,
+    #         )
+    #         self.image_label.setPixmap(scaled_pixmap)
 
-    def resizeEvent(self, event):
-        self.scale_image()
-        super().resizeEvent(event)
+    # def resizeEvent(self, event):
+    #     self.scale_image()
+    #     super().resizeEvent(event)
 
     def closeEvent(self, event):
-        if self.video_thread:
-            self.video_thread.stop()
+        if self.video_threads:
+            for thread in self.video_threads:
+                thread.stop()
+        self.video_threads.clear()
 
         if self.saver_handler:
             self.saver_handler.stop()
-
-        if self.render_thread:
-            self.render_thread.stop()
 
         event.accept()
 
