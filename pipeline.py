@@ -192,15 +192,16 @@ class VideoPipeLine:
 
     def pipeline(self):
         yolo_postprocess = YoloPostProcess(
-            confidence=0.2,
-            iou=0.1,
+            confidence=0.3,
+            iou=0.15,
             tracker=ByteTracker(
                 frame_rate=15,
                 track_high_thresh=0.5, #Порог уверенности для начала трека
                 track_low_thresh=0.2,
                 track_buffer=150,
-                new_track_thresh=0.7,
-                fuse_score=0.2,
+                match_thresh=0.9,
+                new_track_thresh=0.5,
+                fuse_score=0.4,
             ),
         )
 
@@ -306,9 +307,13 @@ class VideoPipeLine:
                     track_id = prediction.get("track_id")
 
                     if track_id:
-                        description = (
-                            f"{track_id} {ocr_filters[track_id].most_frequent()}"
-                        )
+                        try:
+                            description = (
+                                f"{track_id} {ocr_filters[track_id].most_frequent()}"
+                            )
+                        except KeyError:
+                            print("key error {track_id}")
+                            continue
                     else:
                         description = ""
 

@@ -14,7 +14,7 @@ class Render(QThread):
         self.width = width
         self.height = height
 
-        self.update_interval = 30
+        self.update_interval = 60
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.render_frame)
@@ -61,16 +61,12 @@ class Render(QThread):
             # print(self.update_interval)
             # print("f:", mean_fill)s
             error = mean_fill - self.fifo_fill_level
-            # if error > 0:
-            #     print("^")
-            # else:
-            #     print("v")
+
             err = error * 0.001
             self.update_interval *= 1 - err
             interval = int(self.update_interval)
 
-            # print("err", self.update_interval)
-            # print("err", self.update_interval)
+
 
             if interval < 5:
                 interval = 5

@@ -31,11 +31,12 @@ class SQLSaver:
     def __init__(self, sql_path: str):
         self.engine = create_engine(sql_path)
         Base.metadata.create_all(self.engine)
+        self.SessionLocal = sessionmaker(bind=self.engine)
 
-    def save(self, data: Event):
-        with sessionmaker(bind=self.engine)() as session:
+    def save(self, data: list[Event]):
+        with self.SessionLocal() as session:
             try:
-                session.add(data)
+                session.add_all(data)
                 session.commit()
             except Exception as e:
                 session.rollback()
@@ -61,16 +62,16 @@ class SaverEngine:
 
     def loop(self):
         while not self._stop:
-            try:
-                plate = self.queue.get(timeout=1)
-            except Empty:
-                continue
+            events = []
+            while not self.queue.empty():
+                plate = self.queue.get()
+                if not isinstance(plate, str):
+                    raise ValueError(f"data must be str not {type(plate)}")
+                events.append(Event(plate=plate))
 
-            if not isinstance(plate, str):
-                raise ValueError(f"data must be str not {type(plate)}")
-            new_event = Event(plate=plate)
-            print("save", plate)
-            self.saver.save(new_event)
+            self.saver.save(events)
+            events.clear()
+            sleep(0.1)  # пауза между итерациями
 
     def stop(self):
         self._stop = True
