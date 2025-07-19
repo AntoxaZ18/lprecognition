@@ -81,13 +81,11 @@ class VideoPipeLine:
         elif "640" in config["1"]["model"]:
             self.detect_model_shape = (640, 640)
 
-        print(self.stages)
-
     def read_thread(self):
         cap = cv2.VideoCapture(self.source)
         self.fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-        print(self.fps)
+        # print(self.fps)
 
         self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

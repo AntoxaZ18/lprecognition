@@ -174,12 +174,8 @@ class Inference:
 
         model_shape = self.model_img_size(model_name)
 
-        print(args)
-
         if model_shape:
             args["model_shape"] = model_shape
-
-        print("update", args)
 
         session = ort.InferenceSession(
             model, providers=self.providers, sess_options=sess_options
