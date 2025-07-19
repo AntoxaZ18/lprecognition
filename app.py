@@ -1,15 +1,14 @@
+import json
 import os
 import sys
 from queue import Queue
-import json
-
-from inference_engine import Inference, ModelLoadFS
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -18,13 +17,14 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
     QWidget,
-    QGridLayout
+    QListWidget,
+    QListWidgetItem
 )
 
-
+from inference_engine import Inference, ModelLoadFS
 from pipeline import VideoPipeLine
-from saver import SaverEngine, SQLSaver
 from render import Render
+from saver import SaverEngine, SQLSaver, SQLSession, SQLResults
 
 
 class cQLineEdit(QLineEdit):
@@ -41,9 +41,15 @@ class cQLineEdit(QLineEdit):
         self.clicked.emit()
 
 
-class PipeShow():
-    def __init__(self, video_src: str, inference: Inference, config: dict, result_queue: Queue, callback):
-
+class PipeShow:
+    def __init__(
+        self,
+        video_src: str,
+        inference: Inference,
+        config: dict,
+        result_queue: Queue,
+        callback,
+    ):
         self.render_frame_queue = Queue()
         self.video_pipe = VideoPipeLine(
             video_src,
@@ -63,7 +69,7 @@ class PipeShow():
     def stop(self):
         self.video_pipe.stop()
         self.renderer.stop()
-        
+
 
 class VideoWidget(QWidget):
     FIXED_WIDTH = 640
@@ -86,19 +92,23 @@ class VideoWidget(QWidget):
 
     def update_frame(self, cv_img):
         self.qt_img = QPixmap.fromImage(cv_img)
-        self.image_label.setPixmap(self.qt_img.scaled(
-            self.image_label.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        ))
+        self.image_label.setPixmap(
+            self.qt_img.scaled(
+                self.image_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
 
     def resizeEvent(self, event):
         if self.qt_img:
-            self.image_label.setPixmap(self.qt_img.scaled(
-                self.image_label.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            ))
+            self.image_label.setPixmap(
+                self.qt_img.scaled(
+                    self.image_label.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
         super().resizeEvent(event)
 
 
@@ -112,6 +122,7 @@ class VideoWindow(QMainWindow):
         self.height = 600
 
         self.timer = QTimer()
+        self.result_timer = QTimer()
 
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
@@ -136,6 +147,8 @@ class VideoWindow(QMainWindow):
         self.video_fps = QLabel(self)
         self.video_fps.setText("0 FPS")
 
+        self.event_list = QListWidget(self.central_widget)
+
         control_layout = QVBoxLayout()
         control_layout.addWidget(self.file_label)
         control_layout.addWidget(self.video_source)
@@ -143,6 +156,8 @@ class VideoWindow(QMainWindow):
         control_layout.addWidget(self.stop_button)
         control_layout.addWidget(self.perf_label)
         control_layout.addWidget(self.video_fps)
+        control_layout.addWidget(QLabel("События:"))
+        control_layout.addWidget(self.event_list)
         control_layout.addStretch()
 
         # ------------------------------------------------
@@ -157,22 +172,27 @@ class VideoWindow(QMainWindow):
 
         self.central_widget.setLayout(main_layout)
 
-        # Устанавливаем растяжку для метки с видео
-        # central_layout.setStretchFactor(video_layout, 1)
-        # central_layout.setStretchFactor(control_widget, 0)
-
-        # self.central_widget.setLayout(central_layout)
-
-        # self.qt_img = None
-
         self.result_queue = Queue()
         self.inf = Inference(ModelLoadFS("./models"))
-        self.saver = SQLSaver('sqlite:///events.db')
+        self.sql_session = SQLSession("sqlite:///events.db")
+        self.saver = SQLSaver(self.sql_session())
+        self.show_results = SQLResults(self.sql_session(), last=20)
         self.saver_handler = SaverEngine(self.saver, self.result_queue)
 
         self.timer.timeout.connect(self.update_fps)
         self.timer.start(1000)  # время обновления FPS in ms
-        
+
+        self.result_timer.timeout.connect(self.refresh_results)
+        self.result_timer.start(1000)
+
+    def refresh_results(self):
+
+        self.event_list.clear()
+        for plate, timestamp in self.show_results():
+            item = QListWidgetItem(f"{plate} {timestamp.strftime('%H:%M:%S')}")
+            self.event_list.addItem(item)
+        # self.event_list.scrollToBottom()  # Прокрутка вниз
+
 
 
     def start_video(self):
@@ -186,20 +206,18 @@ class VideoWindow(QMainWindow):
         row = len(self.video_widgets) - 1
         self.video_grid.addWidget(video_widget, row // 2, row % 2)  # 2 колонки
 
-
         config = json.load(open("pipe_cfg.json", "r", encoding="utf-8"))
         pipe = PipeShow(
             self.video_source.text(),
             self.inf,
             config,
             self.result_queue,
-            video_widget.update_frame
+            video_widget.update_frame,
         )
 
         self.video_threads.append(pipe)
 
         pipe.start()
-
 
     def stop_video(self):
         if self.video_threads:
@@ -244,19 +262,6 @@ class VideoWindow(QMainWindow):
 
         # self.scale_image()
         self.setMinimumSize(original_size.width(), original_size.height())
-
-    # def scale_image(self):
-    #     if self.qt_img is not None:
-    #         scaled_pixmap = self.qt_img.scaled(
-    #             self.image_label.size(),
-    #             Qt.AspectRatioMode.KeepAspectRatio,
-    #             Qt.TransformationMode.SmoothTransformation,
-    #         )
-    #         self.image_label.setPixmap(scaled_pixmap)
-
-    # def resizeEvent(self, event):
-    #     self.scale_image()
-    #     super().resizeEvent(event)
 
     def closeEvent(self, event):
         if self.video_threads:

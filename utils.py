@@ -1,8 +1,10 @@
-import numpy as np
 from time import time
 
+import numpy as np
+
+
 class IdGen:
-    def __init__(self, thread_id, max_count = 1024):
+    def __init__(self, thread_id, max_count=1024):
         self.thread_id = thread_id
         self.max_count = max_count
         self.counter = 0
@@ -13,14 +15,37 @@ class IdGen:
         self.counter += 1
         return uuid
 
+
 CHARS = [
-     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-     'A', 'B', 'E', 'K', 'M', 'H', 'O', 'P', 'C', 'T',
-     'Y', 'X', '-'
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "A",
+    "B",
+    "E",
+    "K",
+    "M",
+    "H",
+    "O",
+    "P",
+    "C",
+    "T",
+    "Y",
+    "X",
+    "-",
 ]
+
 
 class Decoder:
     """Interface for sequence decoding"""
+
     def decode(self, predicted_seq, chars_list):
         raise NotImplementedError
 
@@ -51,7 +76,7 @@ class GreedyDecoder(Decoder):
             full_pred_labels.append(without_repeating)
 
         for i, label in enumerate(full_pred_labels):
-            decoded_label = ''
+            decoded_label = ""
             for j in label:
                 decoded_label += chars_list[j]
             labels.append(decoded_label)
@@ -61,7 +86,6 @@ class GreedyDecoder(Decoder):
 
 class BeamDecoder(Decoder):
     def decode(self, predicted_seq, chars_list):
-
         labels = []
         final_labels = []
         final_prob = []
@@ -91,7 +115,6 @@ class BeamDecoder(Decoder):
             full_pred_labels = []
             probs = []
             for i in sequences:
-
                 predicted_labels = i[0]
                 without_repeating = []
                 current_char = predicted_labels[0]
@@ -108,7 +131,7 @@ class BeamDecoder(Decoder):
                 full_pred_labels.append(without_repeating)
                 probs.append(i[1])
             for i, label in enumerate(full_pred_labels):
-                decoded_label = ''
+                decoded_label = ""
                 for j in label:
                     decoded_label += chars_list[j]
                 labels.append(decoded_label)

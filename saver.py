@@ -7,6 +7,7 @@ from typing import Protocol, runtime_checkable
 from sqlalchemy import Column, DateTime, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import desc
 
 Base = declarative_base()
 
@@ -26,15 +27,38 @@ class Saver(Protocol):
     def save(self, data: Event) -> None: ...
 
 
-class SQLSaver:
-    # 'sqlite:///users.db'
-    def __init__(self, sql_path: str):
+class SQLSession():
+    def __init__(self, sql_path):
         self.engine = create_engine(sql_path)
         Base.metadata.create_all(self.engine)
-        self.SessionLocal = sessionmaker(bind=self.engine)
+        self.maker = sessionmaker(bind=self.engine)
+
+    def __call__(self):
+        return self.maker()
+
+class SQLResults():
+    def __init__(self, session, last=10):
+        self.last = last
+        self.session = session
+
+    def __call__(self):
+        results = (
+            self.session.query(Event)
+            .order_by(desc(Event.created_at))
+            .limit(self.last)
+            .all()
+        )
+
+        return [(result.plate, result.created_at)for result in results]
+
+class SQLSaver:
+    # 'sqlite:///users.db'
+    def __init__(self, sql_session):
+        
+        self.SessionLocal = sql_session 
 
     def save(self, data: list[Event]):
-        with self.SessionLocal() as session:
+        with self.SessionLocal as session:
             try:
                 session.add_all(data)
                 session.commit()

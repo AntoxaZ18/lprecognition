@@ -1,3 +1,4 @@
+from collections import deque
 from concurrent.futures import as_completed
 from queue import Queue
 from threading import Thread, get_ident
@@ -13,20 +14,19 @@ from preprocess import PlateFilter, YoloPostProcess, crop_image
 from tracker import ByteTracker
 from utils import CHARS, IdGen
 
-from collections import deque
 
-class ResultFilter():
-    def __init__(self, length = 10):
+class ResultFilter:
+    def __init__(self, length=10):
         self.max_size = length
         self._queue = deque(maxlen=length)
         self._set = set()
 
     def add(self, item):
-        '''
+        """
         return item if result is new None if result exists
-        '''
+        """
         if item in self._set:
-            return  
+            return
         if len(self._set) >= self.max_size:
             oldest = self._queue.popleft()
             self._set.remove(oldest)
@@ -34,7 +34,6 @@ class ResultFilter():
         self._queue.append(item)
 
         return item
-
 
     def __contains__(self, item):
         return item in self._set
@@ -46,9 +45,9 @@ class VideoPipeLine:
         video_source: str,
         inference: Inference,
         config: dict,
-        output_queue = None,
+        output_queue=None,
         result_queue: Queue = None,
-        rgb_out = True
+        rgb_out=True,
     ):
         self.source = video_source
         self._stop = False
@@ -77,9 +76,9 @@ class VideoPipeLine:
             self.inference.create_session(model, name, args=args)
             self.inference.create_session(model, name, args=args)
 
-        if ("320" in config["1"]["model"]):
+        if "320" in config["1"]["model"]:
             self.detect_model_shape = (320, 320)
-        elif ("640" in config["1"]["model"]):
+        elif "640" in config["1"]["model"]:
             self.detect_model_shape = (640, 640)
 
         print(self.stages)
@@ -198,7 +197,7 @@ class VideoPipeLine:
             iou=0.15,
             tracker=ByteTracker(
                 frame_rate=15,
-                track_high_thresh=0.5, #Порог уверенности для начала трека
+                track_high_thresh=0.5,  # Порог уверенности для начала трека
                 track_low_thresh=0.2,
                 track_buffer=150,
                 match_thresh=0.9,
@@ -234,16 +233,16 @@ class VideoPipeLine:
 
             start = time()
 
-            yolo_predicts = self.run_inference(self.stages["1"], image_batch, yolo_postprocess)
+            yolo_predicts = self.run_inference(
+                self.stages["1"], image_batch, yolo_postprocess
+            )
 
             # print("yolo_predicts", yolo_predicts)
-
 
             image_batch = dict(
                 sorted(image_batch.items())
             )  # sort dict of images by uuid / timestamp
 
-            
             for uuid, img in image_batch.items():
                 result = yolo_predicts[uuid]
 
@@ -326,8 +325,11 @@ class VideoPipeLine:
                         desc=description,
                     )
 
-                    if track_id and ocr_filters[track_id].most_frequent() and self.result_queue:
-
+                    if (
+                        track_id
+                        and ocr_filters[track_id].most_frequent()
+                        and self.result_queue
+                    ):
                         filtered_result = self.result_filter.add(track_id)
                         if filtered_result:
                             self.result_queue.put(ocr_filters[track_id].most_frequent())
@@ -338,7 +340,6 @@ class VideoPipeLine:
                     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
                 self.sink.put(img)
-
 
             image_batch.clear()
             lpr_images.clear()
