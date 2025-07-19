@@ -2,6 +2,7 @@ import json
 import os
 import sys
 from queue import Queue
+import psutil
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap
@@ -147,6 +148,9 @@ class VideoWindow(QMainWindow):
         self.video_fps = QLabel(self)
         self.video_fps.setText("0 FPS")
 
+        self.cpu_load = QLabel(self)
+        self.cpu_load.setText(f"load: {psutil.cpu_percent(interval=None):.2f} %")
+
         self.event_list = QListWidget(self.central_widget)
 
         control_layout = QVBoxLayout()
@@ -156,6 +160,8 @@ class VideoWindow(QMainWindow):
         control_layout.addWidget(self.stop_button)
         control_layout.addWidget(self.perf_label)
         control_layout.addWidget(self.video_fps)
+        control_layout.addWidget(self.cpu_load)
+
         control_layout.addWidget(QLabel("События:"))
         control_layout.addWidget(self.event_list)
         control_layout.addStretch()
@@ -191,7 +197,6 @@ class VideoWindow(QMainWindow):
         for plate, timestamp in self.show_results():
             item = QListWidgetItem(f"{plate} {timestamp.strftime('%H:%M:%S')}")
             self.event_list.addItem(item)
-        # self.event_list.scrollToBottom()  # Прокрутка вниз
 
 
 
@@ -250,6 +255,10 @@ class VideoWindow(QMainWindow):
             self.video_source.setText(file_name)
 
     def update_fps(self):
+
+        self.cpu_load.setText(f"load: {psutil.cpu_percent(interval=None):.2f} %")
+
+
         if self.video_threads:
             self.perf_label.setText(f"inference: {self.inf.batches_per_second} BPS")
             total_fps = sum([thread.renderer.fps for thread in self.video_threads])
