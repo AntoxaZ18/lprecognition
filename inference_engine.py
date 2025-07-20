@@ -239,6 +239,7 @@ class Inference:
 
         batch_inputs = [task.inputs for task in batch_tasks]
 
+
         preprocessed_batch = session.preprocessor.preprocess_batch(batch_inputs)
 
         # inference here

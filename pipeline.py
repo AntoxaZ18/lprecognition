@@ -253,6 +253,8 @@ class VideoPipeLine:
                     track = detection.get("track_id")
 
                     if track:
+                        if any(d == 0 for d in detection["box"]):
+                            continue
                         ocr_filters[track] = ocr_filters.get(track, PlateFilter())
 
                         box = crop_image(

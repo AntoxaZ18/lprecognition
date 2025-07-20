@@ -220,7 +220,6 @@ class YoloPostProcess:
 
 def crop_image(image:np.ndarray, box: list[int], model_shape: Tuple[int, int], crop=None) -> np.ndarray:
     
-
     h, w, *_ = image.shape
 
     if crop:
@@ -254,10 +253,31 @@ def crop_image(image:np.ndarray, box: list[int], model_shape: Tuple[int, int], c
         box[1] = box[1] - pad / ratio
 
         box = box.astype(int)
+        box[box < 0] = 0
 
         cropped = image[box[1] : box[1] + box[3], box[0] : box[0] + box[2], :]
 
         return cropped
+
+def crop_debug(image:np.ndarray, box: list[int], model_shape: Tuple[int, int], crop=None) -> np.ndarray:
+    
+    h, w, *_ = image.shape
+    
+    print(h, w)
+
+    ratio = model_shape[1] / w
+    pad = (model_shape[0] - int(h * ratio)) / 2 
+
+    box = np.array(box)
+    box = box / ratio
+    box[1] = box[1] - pad / ratio
+
+    box = box.astype(int)
+
+
+    cropped = image[box[1] : box[1] + box[3], box[0] : box[0] + box[2], :]
+
+    return cropped
 
 def crop(image: np.ndarray, box: Tuple[int, int, int, int]):
     return image[box[1] : box[3], box[0] : box[2], :]
