@@ -62,11 +62,9 @@ class Render(QThread):
             # print("f:", mean_fill)s
             error = mean_fill - self.fifo_fill_level
 
-            err = error * 0.001
-            self.update_interval *= 1 - err
+            err = error * 0.002
+            self.update_interval *= (1 - err)
             interval = int(self.update_interval)
-
-
 
             if interval < 5:
                 interval = 5

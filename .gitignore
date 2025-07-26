@@ -10,5 +10,5 @@
 *.db
 *.exe
 *.spec
-
+*.onnx
 !app_screen.png
